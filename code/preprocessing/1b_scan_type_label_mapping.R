@@ -1,0 +1,194 @@
+# File: 1b_scan_type_label_mapping.R
+# Date: 12/14/23
+# Author: Lawrence Chillrud <chili@u.northwestern.edu>
+# Description: map the scan type labels to broader pulse sequence categories as defined by Virginia 
+# in her email "key words for labeling pulse sequences" on 12/14
+
+# package imports
+library(tidyverse)
+library(readxl)
+library(openxlsx)
+
+# read in data
+input_file <- "data/preprocessing/NURIPS_downloads/12-19-2023-MeningiomasScanTypeCleanup.xlsx"
+
+df <- read_xlsx(here::here(input_file)) %>% 
+  rename(og_series := `Series Desc`, frames := Frames, img_type = `Image Type`)
+
+# helper functions
+id_view <- function(string) {
+  views <- c("AX", "COR", "SAG")
+  view <- ""
+  for (v in views) if (str_detect(string, v)) view <- v
+  return(view)
+}
+
+id_prepost <- function(string) {
+  pre_post <- ""
+  if (str_detect(string, "PRE")) pre_post <- "PRE"
+  if (str_detect(string, "POST")) pre_post <- "POST"
+  return(pre_post)
+}
+
+id_fs <- function(string) {
+  fs <- ""
+  if (str_detect(string, "FS")) fs <- "FS"
+  return(fs)
+}
+
+categorize_pulse_sequence <- function(string) {
+  # Exclusions
+  to_exclude <- c("SCOUT", "LOCALIZER", "LOC", "DTI", "TOF", "SPIN", "TUMBLE", "EXPONENTIAL", "EADC", "EXPONENTIALADC", "EXPONENTIALAPPARENTDIFFUSIONCOEFFICIENT", "BLOODVOLUME", "BLOODFLOW")
+  for (e in to_exclude) {
+    if (str_detect(string, e)) return("EXCLUDED")
+  }
+  
+  # Replacements
+  replacements_3d_t1 <- c("MPRAGE", "VIBE", "FSPGR3D", "BRAVO", "BRAINLAB")
+  for (r in replacements_3d_t1) string <- str_replace(string, r, "3DT1")
+  string <- str_replace(string, "STEALTH", "3D")
+  string <- str_replace(string, "SPACE", "3D")
+  string <- str_replace(string, "CISS", "3DT2")
+  
+  pulse <- ""
+  # SWI
+  if (pulse == "" & (str_detect(string, "SWI") | str_detect(string, "SWAN"))) {
+    pulse <- "SWI"
+  }
+  # GRE
+  if (pulse == "" & str_detect(string, "GRE")) {
+    pulse <- "GRE"
+  }
+  # ADC
+  if (pulse == "" & (str_detect(string, "ADC") | str_detect(string, "APPARENT"))) {
+    pulse <- "ADC"
+  }
+  # DWI
+  dwis <- c("DWI", "DIFFUSION", "DIFF", "TRACE", "B1000")
+  for (d in dwis) if (pulse == "" & str_detect(string, d)) {
+    pulse <- "DWI"
+  }
+  # FLAIR
+  if (pulse == "" & str_detect(string, "T1") & str_detect(string, "FLAIR")) {
+    pulse <- "2D T1"
+  }
+  if (pulse == "" & str_detect(string, "FLAIR")) {
+    if (str_detect(string, "3D") | str_detect(string, "1X1")) {
+      pulse <- "3D FLAIR"
+    } else {
+      pulse <- "2D FLAIR"
+    }
+  }
+  # T1
+  if (pulse == "" & str_detect(string, "T1")) {
+    if (str_detect(string, "3D")) {
+      pulse <- "3D T1"
+    } else {
+      pulse <- "2D T1"
+    }
+  }
+  # T2
+  if (pulse == "" & str_detect(string, "T2")) {
+    if (str_detect(string, "3D")) {
+      pulse <- "3D T2"
+    } else {
+      pulse <- "2D T2"
+    }
+  }
+  # Everything else
+  if (pulse == "") { 
+    return("UNDEFINED")
+  } 
+  
+  return(pulse)
+  
+}
+
+wrap_and_indent <- function(text, width = 80, indent = "\t") {
+  # Split the text into words
+  words <- unlist(strsplit(text, " "))
+  
+  # Initialize variables
+  current_line <- words[1]
+  indented_text <- ""
+  
+  # Iterate over words and construct lines
+  for (word in words[-1]) {
+    if (nchar(current_line) + nchar(word) + 1 <= width) {
+      # If the word fits in the current line, add it
+      current_line <- paste(current_line, word, sep = " ")
+    } else {
+      # If it doesn't fit, start a new line
+      indented_text <- paste0(indented_text, indent, current_line, "\n")
+      current_line <- word
+    }
+  }
+  
+  # Add the last line
+  indented_text <- paste0(indented_text, indent, current_line, "\n")
+  
+  # Return the indented text
+  return(indented_text)
+}
+
+# map all scan types to the smaller set defined in categorize_pulse_sequence()
+df <- df %>% 
+  rowwise() %>% 
+  mutate(
+    og_series = toupper(og_series),
+    pulse = categorize_pulse_sequence(og_series),
+    view = id_view(og_series),
+    pre_or_post = id_prepost(og_series),
+    fs = id_fs(og_series),
+    full_label = gsub("\\s+", " ", str_trim(paste(pulse, pre_or_post, view, fs), "both"))
+  )
+
+# table(df$pulse)
+
+# save mapping
+output_file <- "data/preprocessing/output/1_scan_type_cleanup/1b_mapping"
+write_csv(df, here::here(paste0(output_file, ".csv")))
+write.xlsx(df, file = here::here(paste0(output_file, ".xlsx")))
+
+# write README documenting the resulting mapping
+readme <- file(here::here(paste0(output_file, "_README.txt")), open = "w")
+
+all_pulses <- sort(unique(df$pulse))
+special_categories <- all_pulses %in% c("UNDEFINED", "EXCLUDED")
+all_pulses <- c(sort(all_pulses[special_categories], decreasing = T), all_pulses[!special_categories])
+
+cat(paste(strrep("-", 80), "\n\n"), file = readme)
+cat("File: README.txt documenting files 1b_mapping.[csv, xlsx]\n", file = readme)
+cat("Author: Lawrence Chillrud <chili@u.northwestern.edu>\n", file = readme)
+cat(paste("Date:", Sys.Date(), "\n"), file = readme)
+cat("Generated by the script: code/preprocessing/1b_scan_type_label_mapping.R\n\n", file = readme)
+cat(paste(strrep("-", 80), "\n\n"), file = readme)
+cat("Notes:\n\n", file = readme)
+cat(wrap_and_indent("* The files 1b_mapping.[csv, xlsx] present the same information, just in different file formats\n", indent = "\t"), file = readme)
+cat(wrap_and_indent(paste0("* The data is of size ", paste(dim(df), collapse = " x "), ", with columns:"), indent = "\t"), file = readme)
+cat(wrap_and_indent(paste0("- og_series: The original series description as given on NURIPS"), indent = "\t\t"), file = readme)
+cat(wrap_and_indent(paste0("- frames: The frames as given on NURIPS"), indent = "\t\t"), file = readme)
+cat(wrap_and_indent(paste0("- img_type: The image type as given on NURIPS"), indent = "\t\t"), file = readme)
+cat(wrap_and_indent(paste0("- pulse: The categorized pulse sequence as determined by the mapping .R script"), indent = "\t\t"), file = readme)
+cat(wrap_and_indent(paste0("- view: The categorized view as determined by the mapping .R script"), indent = "\t\t"), file = readme)
+cat(wrap_and_indent(paste0("- pre_or_post: Indicating whether PRE or POST is in the og_series description"), indent = "\t\t"), file = readme)
+cat(wrap_and_indent(paste0("- fs: Indicating whether FS (fat saturated) is in the og_series description"), indent = "\t\t"), file = readme)
+cat(wrap_and_indent(paste0("- full_label: The full label resulting from joining the pulse, view, pre_or_post, and fs values together\n"), indent = "\t\t"), file = readme)
+cat(wrap_and_indent(paste("* There are", length(all_pulses), "different categories of pulses:", paste(all_pulses, collapse = ", "), "\n"), indent = "\t"), file = readme)
+cat(wrap_and_indent(paste("* There are", length(unique(df$full_label)), "unique full_label names\n"), indent = "\t"), file = readme)
+cat(wrap_and_indent(paste("* These files were generated using the hand-made (i.e., copied and pasted into excel sheet from NURIPS Scan Type Cleanup page) input file:", input_file, "\n"), indent = "\t"), file = readme)
+cat(paste(strrep("-", 80), "\n\n"), file = readme)
+cat("The mapping created is as follows:\n\n", file = readme)
+
+for (p in all_pulses) {
+  cat(paste(p, "maps to:\n"), file = readme)
+  df_sub <- df %>% filter(pulse == p)
+  cat(wrap_and_indent(paste(unique(df_sub$og_series), collapse = ", ")), file = readme)
+  cat("\n", file = readme)
+}
+
+cat(paste(strrep("-", 80), "\n\n"), file = readme)
+cat("End of README.txt\n\n", file = readme)
+cat(paste(strrep("-", 80), "\n"), file = readme)
+
+close(readme)
