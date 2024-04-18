@@ -31,8 +31,8 @@ classifiers = [x for x in final_models for _ in range(len(rfe_models))]
 N = len(feature_selectors)
 
 # Define tasks, test set sizes, and seeds to loop thru
-tasks = ['Chr22q', 'Chr1p'] # ['Chr22q', 'MethylationSubgroup', 'Chr1p'] 
-test_sizes = [16, 16] # [16, 18, 16]
+tasks = ['MethylationSubgroup'] # ['Chr22q', 'MethylationSubgroup', 'Chr1p'] 
+test_sizes = [18] # [16, 18, 16]
 seeds = [22, 23, 24, 25, 26]
 
 overall_begin_time = time.time()
