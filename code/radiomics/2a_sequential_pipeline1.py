@@ -17,7 +17,7 @@ setup()
 USE_SMOTE = True
 SCALER = 'Standard'
 EVEN_TEST_SPLIT = True
-OUTPUT_DIR = 'data/radiomics_results_big_binary'
+OUTPUT_DIR = 'data/radiomics_results_big_methyl'
 N_JOBS = 16
 
 # Define feature selection and final classification models to use
