@@ -1,6 +1,7 @@
 # %%
 import os
-while not os.getcwd().endswith('code'): os.chdir('..')
+import sys
+sys.path.append('/home/lawrence/Meningioma/code')
 from preprocessing.utils import explore_3D_array_with_mask_contour
 from deeplearning.transforms import CenterOnTumor, Normalize
 from deeplearning.prep_data import MeningiomaDataset, create_dataloaders, create_only_train_val_dataloaders, stack_volumes
@@ -13,16 +14,23 @@ from torch import optim
 from torch.utils.tensorboard import SummaryWriter
 from torchvision import transforms
 import pandas as pd
+import numpy as np
+import random
 from tqdm import tqdm
 
 # Set up directory structures and GPU/CPU/MPS device
-OUTPUT_DIR = 'results/deeplearning/debugging'
+OUTPUT_DIR = 'results/deeplearning/debugging_seed0_test2'
 while not os.getcwd().endswith('Meningioma'): os.chdir('..')
 DEVICE = torch.device(f'cuda:2' if torch.cuda.is_available() else 'cpu')
 SEED = 0
 torch.manual_seed(SEED)  # Set the seed for CPU random number generators
 if torch.cuda.is_available():
     torch.cuda.manual_seed(SEED)  # Set the seed for GPU random number generators
+    torch.cuda.manual_seed_all(SEED)
+np.random.seed(SEED)
+random.seed(SEED)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
 
 def evaluate(model, criterion, dataloader):
     # Setup for evaluation
@@ -136,7 +144,7 @@ ds = MeningiomaDataset(
 )
 ds.precache()
 ds.plot_data_split()
-dataloaders = create_dataloaders(ds, bs=4, independent_test_set=True, seed=SEED)
+dataloaders = create_dataloaders(ds, bs=4, independent_test_set=False, seed=SEED)
 
 # Initialize model, optimizer, and loss fn
 model = CalabreseModel(input_channels=3).to(DEVICE)
@@ -145,7 +153,7 @@ criterion = nn.BCELoss()
 
 # %%
 # Train
-train(model, optimizer, criterion, dataloaders)
+train(model, optimizer, criterion, dataloaders, epochs=5)
 
 # %%
 # Test
@@ -161,5 +169,5 @@ for weights in ['best_val_loss', 'best_val_balancedacc']:
             if not os.path.exists(preds_dir): os.makedirs(preds_dir)
             preds_df.to_csv(f'{preds_dir}/{k}_preds.csv', index=False)
 
-eval_dict
+print(eval_dict)
 # %%

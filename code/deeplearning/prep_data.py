@@ -12,6 +12,7 @@ import torch
 # standard libraries
 import pandas as pd
 import numpy as np
+import random
 # logging helpers
 from tqdm import tqdm
 from zlib import adler32
@@ -315,10 +316,18 @@ def create_dataloaders(ds, bs=10, train_prop=0.8, independent_test_set=True, see
 
     idxs_dict = {'train': train_idxs, 'val': val_idxs, 'test': test_idxs}
     dataloaders_dict = {}
+    def seed_worker(worker_id):
+        worker_seed = torch.initial_seed() % 2**32
+        np.random.seed(worker_seed)
+        random.seed(worker_seed)
+
+    g = torch.Generator()
+    g.manual_seed(seed)
+
     for ds_idxs in idxs_dict:
         subset_ds = Subset(ds, idxs_dict[ds_idxs])
         sampler = WeightedRandomSampler(train_sample_weights, len(train_sample_weights), replacement=True) if ds_idxs == 'train' else None
-        dataloaders_dict[ds_idxs] = DataLoader(subset_ds, batch_size=bs, sampler=sampler, pin_memory=True)
+        dataloaders_dict[ds_idxs] = DataLoader(subset_ds, batch_size=bs, sampler=sampler, num_workers=4, worker_init_fn=seed_worker, generator=g, pin_memory=True)
 
     return dataloaders_dict
 
