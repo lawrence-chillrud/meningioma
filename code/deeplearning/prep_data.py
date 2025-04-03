@@ -12,7 +12,9 @@ import torch
 # standard libraries
 import pandas as pd
 import numpy as np
+import itertools
 import random
+import copy
 # logging helpers
 from tqdm import tqdm
 from zlib import adler32
@@ -241,13 +243,19 @@ class MeningiomaDataset(Dataset):
     def get_subjects_by_class(self): return self.subjects_by_class
     def get_subjects_by_pulse_sequence(self): return self.subjects_by_pulse_sequence
 
+    def create_kfold_xval_splits(self, k=5):
+        self.kfold_xval_splits = {}
+        for c in self.subjects_by_class:
+            random.shuffle(self.subjects_by_class[c])
+            self.kfold_xval_splits[c] = [self.subjects_by_class[c][i::k] for i in range(k)]
+
 def get_sample_weights(y):
     """
     Calculates the inverse class frequencies of all classes appearing in y, 
     then returns how much weight to put on each sample in y in order to obtain balanced classes when 
     using a WeightedRandomSampler equipped with those weights.
     """
-    icf = 1/np.bincount(y.astype(int))
+    icf = 1/np.bincount(y)
     return icf[y]
 
 def get_proper_indices(full_list, subset_list):
@@ -269,6 +277,39 @@ def get_proper_indices(full_list, subset_list):
     for element in subset_list:
         proper_idxs.append(full_list.index(element))
     return proper_idxs
+
+def seed_worker(worker_id):
+    worker_seed = torch.initial_seed() % 2**32
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
+
+def construct_foldk_dataloaders(ds, fold, bs=10, seed=0):
+    sublists_dict = copy.deepcopy(ds.kfold_xval_splits)
+    train_sub_IDs, val_sub_IDs = [], []
+
+    for c in sublists_dict:
+        val_sub_IDs += sublists_dict[c].pop(fold)
+        train_sub_IDs += list(itertools.chain(*sublists_dict[c]))
+
+    train_labels = ds.get_labels()[train_sub_IDs]    
+    train_sample_weights = get_sample_weights(train_labels)
+
+    subs = ds.get_subjects()
+    train_idxs = get_proper_indices(full_list=subs, subset_list=train_sub_IDs)
+    val_idxs = get_proper_indices(full_list=subs, subset_list=val_sub_IDs)
+
+    idxs_dict = {'train': train_idxs, 'val': val_idxs}
+    dataloaders_dict = {}
+
+    g = torch.Generator()
+    g.manual_seed(seed)
+
+    for ds_idxs in idxs_dict:
+        subset_ds = Subset(ds, idxs_dict[ds_idxs])
+        sampler = WeightedRandomSampler(train_sample_weights, len(train_sample_weights), replacement=True) if ds_idxs == 'train' else None
+        dataloaders_dict[ds_idxs] = DataLoader(subset_ds, batch_size=bs, sampler=sampler, num_workers=4, worker_init_fn=seed_worker, generator=g, pin_memory=True)
+
+    return dataloaders_dict
 
 def create_dataloaders(ds, bs=10, train_prop=0.8, independent_test_set=True, seed=0):
     """
@@ -316,10 +357,6 @@ def create_dataloaders(ds, bs=10, train_prop=0.8, independent_test_set=True, see
 
     idxs_dict = {'train': train_idxs, 'val': val_idxs, 'test': test_idxs}
     dataloaders_dict = {}
-    def seed_worker(worker_id):
-        worker_seed = torch.initial_seed() % 2**32
-        np.random.seed(worker_seed)
-        random.seed(worker_seed)
 
     g = torch.Generator()
     g.manual_seed(seed)
