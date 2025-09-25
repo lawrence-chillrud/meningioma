@@ -355,7 +355,7 @@ def plot_corr_matrix(X, outcome='?', output_dir=None, normalizer=None):
         plt.show()
     plt.close()
 
-def count_subjects(labels_file='data/labels/MeningiomaBiomarkerData.csv', mri_dir='data/preprocessed_mri_scans/7_COMPLETED_PREPROCESSED', segs_dir='data/segmentations', outcome='MethylationSubgroup', verbose=False, drop_by_outcome=True):
+def count_subjects(labels_file='/home/data/lawrence/meningioma_data/labels/MeningiomaBiomarkerData.csv', mri_dir='/home/data/lawrence/meningioma_data/preprocessing/output/7b_COMPLETED_PREPROCESSED', segs_dir='/home/data/lawrence/meningioma_data/all_smooth_segs_02-08-25', outcome='MethylationSubgroup', verbose=False, drop_by_outcome=True):
     """
     Given a labels file, MRI directory, segmentations directory, and outcome variable (prediction task), this function returns: 
     * the number of subjects with MRI data & biomarker data;

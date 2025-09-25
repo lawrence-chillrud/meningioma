@@ -56,7 +56,10 @@ class CalabreseModel(nn.Module):
         self.layers.append(nn.Linear(int(0.5*num_filters*(original_shape/(2**len(layer_layout)))**3), dense_features))
         self.layers.append(nn.LeakyReLU())
         self.layers.append(nn.Linear(dense_features, output_features))
-        self.layers.append(nn.Sigmoid())
+        if final_layer == "sigmoid" and output_features == 1:
+            self.layers.append(nn.Sigmoid())
+        elif final_layer == "softmax":
+            self.layers.append(nn.Softmax(dim=1))
     
     def forward(self, x):
         for layer in self.layers:

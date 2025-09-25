@@ -13,7 +13,7 @@ from utils import count_subjects, get_subset_scan_counts
 setup()
 
 # %%
-MRI_DIR = 'data/preprocessing/output/7b_COMPLETED_PREPROCESSED'
+MRI_DIR = '/home/data/lawrence/meningioma_data/preprocessing/output/7b_COMPLETED_PREPROCESSED'
 subjects = lsdir(MRI_DIR)
 sessions = []
 for s in subjects:
@@ -25,10 +25,12 @@ for s in subjects:
     else:
         sessions.append('other')
 
-pd.DataFrame({'Subject Number': subjects, 'Session': sessions}).to_csv('data/labels/subject_sessions.csv', index=False)
+subject_sessions_df = pd.DataFrame({'Subject Number': subjects, 'Session': sessions})
+
+subject_sessions_df.to_csv('/home/data/lawrence/meningioma_data/labels/subject_sessions.csv', index=False)
 
 # %%
-df = pd.read_csv('data/radiomics/features6/features_wide.csv')
+df = pd.read_csv('/home/data/lawrence/meningioma_data/radiomics/features/features_wide.csv')
 
 # %%
 _, _, have_df = count_subjects(drop_by_outcome=False)

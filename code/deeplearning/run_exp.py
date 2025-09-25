@@ -19,7 +19,8 @@ import random
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 while not os.getcwd().endswith('Meningioma'): os.chdir('..')
-OUTPUT_DIR = 'results/deeplearning/chr1p'
+task = 'MethylationSubgroup' # 'MethylationSubgroup'
+OUTPUT_DIR = f'results/deeplearning/{task}'
 
 # %%
 # Set up directory structures and GPU/CPU/MPS device
@@ -35,6 +36,13 @@ random.seed(SEED)
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
+def make_full_dict(input_dict, class_names):
+    output_dict = {}
+    for key, array in input_dict.items():
+        for i in range(len(array)):
+            output_dict[f'{class_names[i]}_{key}'] = array[i]
+    return output_dict
+
 def evaluate(model, criterion, dataloader):
     # Setup for evaluation
     model.eval()
@@ -45,6 +53,9 @@ def evaluate(model, criterion, dataloader):
             # Grab the batch data
             X_batch = stack_volumes(batch['mris']).to(DEVICE)
             y_batch = batch['label'].to(DEVICE)
+            # Adjust for multiclass labels
+            if len(y_batch.shape) == 1 and criterion.__class__.__name__ == "CrossEntropyLoss":
+                y_batch = y_batch.long()
             # Run inference
             outputs = model(X_batch)
             # Keep track of predictions and true labels
@@ -52,25 +63,33 @@ def evaluate(model, criterion, dataloader):
             y_trues = torch.cat((y_trues, y_batch))
             sub_IDs = torch.cat((sub_IDs, batch['sub_id']))
             # Backward pass
-            loss += criterion(outputs.squeeze(1), y_batch.float()).item()
+            if criterion.__class__.__name__ == "CrossEntropyLoss":
+                loss += criterion(outputs, y_batch).item()
+            else:
+                loss += criterion(outputs.squeeze(1), y_batch.float()).item()
     
-    # Calculate evaluation metrics and return
-    loss /= len(dataloader)
-    metrics = {
-        'loss': loss,
-        'balancedacc': balanced_accuracy(y_trues, y_preds).item(),
-        'aucpr': average_precision_score(y_trues.cpu().numpy(), y_preds.cpu().detach().numpy()),
-        'auroc': roc_auc_score(y_trues.cpu().numpy(), y_preds.cpu().detach().numpy()),
-        'tpr': true_positive_rate(y_trues, y_preds).item(),
-        'fpr': false_positive_rate(y_trues, y_preds).item(),
-        'fdr': false_discovery_rate(y_trues, y_preds).item()
-    }
-    preds = pd.DataFrame({
-        'SubjectID': sub_IDs.cpu().numpy(),
-        'y': y_trues.cpu().numpy(),
-        'y_pred': y_preds.cpu().squeeze().numpy()
-    })
-    return metrics, preds
+        # Calculate evaluation metrics and return
+        loss /= len(dataloader)
+        metrics = all_metrics(y_trues, y_preds)
+        # if criterion.__class__.__name__ == "CrossEntropyLoss":
+        #     metrics = make_full_dict(metrics, ['Merlin Intact', 'Immune Enriched', 'Hypermetabolic'])
+        
+        metrics["AUCPR"] = average_precision_score(y_trues.cpu().numpy(), y_preds.cpu().detach().numpy(), average='macro')
+        metrics["AUROC"] = roc_auc_score(y_trues.cpu().numpy(), y_preds.cpu().detach().numpy(), multi_class='ovr')
+        metrics["LOSS"] = loss
+        if criterion.__class__.__name__ == "CrossEntropyLoss":
+            preds = pd.DataFrame({
+                'SubjectID': sub_IDs.cpu().numpy(),
+                'y': y_trues.cpu().numpy(),
+                'y_pred': y_preds.argmax(dim=1).cpu().squeeze().numpy()
+            })
+        else:
+            preds = pd.DataFrame({
+                'SubjectID': sub_IDs.cpu().numpy(),
+                'y': y_trues.cpu().numpy(),
+                'y_pred': y_preds.cpu().squeeze().numpy()
+            })
+        return metrics, preds
 
 def test(model, dataloaders, criterion, output_dir):
     eval_dict = {}
@@ -108,6 +127,9 @@ def train(model, optimizer, criterion, data, output_dir, epochs=40):
             # Grab the batch data
             X_batch = stack_volumes(batch['mris']).to(DEVICE)
             y_batch = batch['label'].to(DEVICE)
+            # Adjust for multiclass labels
+            if len(y_batch.shape) == 1 and criterion.__class__.__name__ == "CrossEntropyLoss":
+                y_batch = y_batch.long()
             # Zero out the gradients
             optimizer.zero_grad()
             # Forward pass
@@ -116,7 +138,10 @@ def train(model, optimizer, criterion, data, output_dir, epochs=40):
             y_preds = torch.cat((y_preds, outputs.squeeze(1)))
             y_trues = torch.cat((y_trues, y_batch))
             # Backward pass
-            loss = criterion(outputs.squeeze(1), y_batch.float())
+            if criterion.__class__.__name__ == "CrossEntropyLoss":
+                loss = criterion(outputs, y_batch)
+            else:
+                loss = criterion(outputs.squeeze(1), y_batch.float())
             loss.backward()
             # Take an optimization step
             optimizer.step()
@@ -125,15 +150,13 @@ def train(model, optimizer, criterion, data, output_dir, epochs=40):
         
         # Training metrics
         train_loss /= len(data['train'])
-        train_metrics = {
-            'loss': train_loss,
-            'balancedacc': balanced_accuracy(y_trues, y_preds).item(),
-            'aucpr': average_precision_score(y_trues.cpu().numpy(), y_preds.cpu().detach().numpy()),
-            'auroc': roc_auc_score(y_trues.cpu().numpy(), y_preds.cpu().detach().numpy()),
-            'tpr': true_positive_rate(y_trues, y_preds).item(),
-            'fpr': false_positive_rate(y_trues, y_preds).item(),
-            'fdr': false_discovery_rate(y_trues, y_preds).item()
-        }
+        train_metrics = all_metrics(y_trues, y_preds)
+        # if criterion.__class__.__name__ == "CrossEntropyLoss":
+        #     train_metrics = make_full_dict(train_metrics, ['Merlin Intact', 'Immune Enriched', 'Hypermetabolic'])
+
+        train_metrics["AUCPR"] = average_precision_score(y_trues.cpu().numpy(), y_preds.cpu().detach().numpy(), average='macro')
+        train_metrics["AUROC"] = roc_auc_score(y_trues.cpu().numpy(), y_preds.cpu().detach().numpy(), multi_class='ovr')
+        train_metrics["LOSS"] = train_loss
 
         # Validation metrics
         val_metrics, _ = evaluate(model, criterion, data['val'])
@@ -144,12 +167,12 @@ def train(model, optimizer, criterion, data, output_dir, epochs=40):
 
         # Save best performing models
         if not os.path.exists(f'{output_dir}/model_weights'): os.makedirs(f'{output_dir}/model_weights')
-        if val_metrics['loss'] < best_val_loss:
+        if val_metrics['LOSS'] < best_val_loss:
             torch.save(model.state_dict(), f'{output_dir}/model_weights/best_val_loss.pt')
-            best_val_loss = val_metrics['loss']
-        if val_metrics['balancedacc'] > best_val_balanced_acc:
+            best_val_loss = val_metrics['LOSS']
+        if val_metrics['BACC'] > best_val_balanced_acc:
             torch.save(model.state_dict(), f'{output_dir}/model_weights/best_val_balancedacc.pt')
-            best_val_loss = val_metrics['balancedacc']
+            best_val_loss = val_metrics['BACC']
         
     # Close logging
     tensorboard_writer.flush()
@@ -170,9 +193,12 @@ def run_kfold_exp(ds, k=5, epochs=40):
         dataloaders = construct_foldk_dataloaders(ds, fold, bs=4, seed=SEED)
         
         # Initialize model, optimizer, and loss fn
-        model = CalabreseModel(input_channels=3).to(DEVICE)
-        optimizer = optim.AdamW(model.parameters(), lr=0.0001, weight_decay=0.001)
-        criterion = nn.BCELoss()
+        out_feats = 1 if ds.num_classes == 2 else ds.num_classes
+        final_layer = "sigmoid" if ds.num_classes == 2 else "softmax"
+        criterion = nn.BCELoss() if ds.num_classes == 2 else nn.CrossEntropyLoss()
+        learning_rate = 0.0001 if ds.num_classes == 2 else 0.00001
+        model = CalabreseModel(input_channels=len(ds.pulse_sequences), output_features=out_feats, final_layer=final_layer).to(DEVICE)
+        optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=0.001)
 
         # Train
         train(model, optimizer, criterion, dataloaders, output_dir, epochs)
@@ -184,7 +210,7 @@ def run_kfold_exp(ds, k=5, epochs=40):
 
 # Create dataset, and then dataloaders
 ds = MeningiomaDataset(
-    task_name='Chr1p',
+    task_name=task,
     pulse_sequences=['t1_post', 'flair', 'adc'],
     seg_rois=[22],
     transforms=transforms.Compose([
@@ -194,41 +220,44 @@ ds = MeningiomaDataset(
 )
 
 # %%
-run_kfold_exp(ds, epochs=40)
+run_kfold_exp(ds, epochs=100)
 
 # %%
 fprs = []
 tprs = []
 aucs_list = []
+is_multiclass = ds.num_classes > 2
+
 for d in os.listdir(OUTPUT_DIR):
     preds_df = pd.read_csv(f'{OUTPUT_DIR}/{d}/predictions/best_val_balancedacc/val_preds.csv')
-    fpr, tpr, _ = roc_curve(preds_df['y'], preds_df['y_pred'])
-    auc_score = auc(fpr, tpr)
-    fprs.append(fpr)
-    tprs.append(tpr)
-    aucs_list.append(auc_score)
-
-# Calculate mean and standard deviation of ROCs
-# mean_fpr = np.linspace(0, 1, 100)
-# mean_tpr = np.mean([i[1] for i in tprs], axis=0)
-# std_tpr = np.std([i[1] for i in tprs], axis=0)
-# mean_auc = 0# auc(np.mean([i[0] for i in fprs], axis=0), mean_tpr)
-# std_auc = 0# np.sqrt(np.mean([(i - mean_auc)**2 for i in aucs_list]))
+    if is_multiclass:
+        y_true = pd.get_dummies(preds_df['y']).values
+        y_pred = preds_df.iloc[:, 2:].values  # Assuming predictions start from the 3rd column
+        for i in range(ds.num_classes):
+            fpr, tpr, _ = roc_curve(y_true[:, i], y_pred[:, i])
+            auc_score = auc(fpr, tpr)
+            fprs.append(fpr)
+            tprs.append(tpr)
+            aucs_list.append((i, auc_score))
+    else:
+        fpr, tpr, _ = roc_curve(preds_df['y'], preds_df['y_pred'])
+        auc_score = auc(fpr, tpr)
+        fprs.append(fpr)
+        tprs.append(tpr)
+        aucs_list.append(auc_score)
 
 # Plotting
 plt.figure(figsize=(10, 6))
 
-# Plot individual fold ROCs for reference
-for i in range(len(tprs)):
-    plt.plot(fprs[i], tprs[i], label=f'Fold {i+1} (AUC = {aucs_list[i]:.3f})')
-
-# Plot mean ROC with error bar
-# plt.plot(mean_fpr, mean_tpr, color='b', label=r'Mean ROC (AUC = %0.3f ± %0.3f)' % (mean_auc, std_auc))
-# plt.fill_between(mean_fpr, mean_tpr - std_tpr, mean_tpr + std_tpr, color='b', alpha=.2)
+if is_multiclass:
+    for i, (fpr, tpr) in enumerate(zip(fprs, tprs)):
+        plt.plot(fpr, tpr, label=f'Class {aucs_list[i][0]} (AUC = {aucs_list[i][1]:.3f})')
+else:
+    for i in range(len(tprs)):
+        plt.plot(fprs[i], tprs[i], label=f'Fold {i+1} (AUC = {aucs_list[i]:.3f})')
 
 plt.xlabel('False Positive Rate')
 plt.ylabel('True Positive Rate')
-plt.title('Mean ROC with ±1 Std Dev')
+plt.title('ROC Curves')
 plt.legend(loc='lower right')
 plt.show()
-# %%
